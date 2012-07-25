@@ -1,0 +1,245 @@
+<html>
+<head>
+<meta charset="utf-8">
+<title>WebGL</title>
+<script type="text/javascript" src="resources/webgl-utils.js"></script>
+
+<script id="vx-shader" type="x-shader/x-vertex">
+attribute vec2 a_position;
+attribute vec2 a_texCoord;
+
+uniform vec2 u_resolution;
+uniform mat3 u_matrix;
+
+varying vec2 v_texCoord;
+
+void main() {
+	vec2 position = (u_matrix * vec3(a_position, 1)).xy;
+
+	vec2 zeroToOne = position / u_resolution;
+
+	vec2 zeroToTwo = zeroToOne * 2.0;
+
+	vec2 clipSpace = zeroToTwo - 1.0;
+
+	gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+
+	v_texCoord = a_texCoord;
+}
+</script></script>
+
+<script id="fr-shader" type="x-shader/x-fragment">
+precision mediump float;
+
+uniform sampler2D u_image;
+
+uniform float u_Alpha;
+
+varying vec2 v_texCoord;
+
+void main() {
+    vec4 textureColor = texture2D(u_image, v_texCoord);
+    gl_FragColor = vec4(textureColor.rgb, textureColor.a * u_Alpha);
+}
+</script>
+<script type="text/javascript">
+	function Wrapper() {
+		var gl;
+		var program;
+	
+		var textures = new Array();
+
+		var counter = 0;
+
+		var rectangles = [createRectangle(3840, 2860), createRectangle(800, 600), createRectangle(1024, 768)];
+		
+		var _matrixUtil = new MatrixUtil();
+
+		this.init = function () {
+			var canvas = document.getElementById("canvas");
+			gl = getWebGLContext(canvas);
+
+			counter = 0;
+
+			var imagesUrls = ["resources/box.png", "resources/forest.png", "resources/minecraft.png"];
+			var handler = function() { 
+				var texture = createTexture(this);
+				textures.push(texture);
+				if(++counter == 3) {
+					onLoadHandler(); 
+				} else {
+					var image = new Image();
+					image.onload = handler;
+					image.src = imagesUrls[counter];
+				}
+			}
+
+			var image = new Image();
+			image.onload = handler;
+			image.src = imagesUrls[0];
+		}
+
+		function onLoadHandler() {
+			gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+			gl.enable(gl.BLEND);
+
+			initShaders(gl);
+
+			program.positionLocation = gl.getAttribLocation(program, "a_position");
+			program.texCoordLocation = gl.getAttribLocation(program, "a_texCoord");
+			program.matrixLocation = gl.getUniformLocation(program, "u_matrix");
+			program.alphaLocation = gl.getUniformLocation(program, "u_Alpha");
+
+			var texCoordBuffer = gl.createBuffer();
+			gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+			gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+			  0.0,  1.0,
+			  0.0,  0.0,
+			  1.0,  1.0,
+			  1.0,  0.0,]), gl.STATIC_DRAW);
+			gl.enableVertexAttribArray(program.texCoordLocation);
+			gl.vertexAttribPointer(program.texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+			var buffer = gl.createBuffer();
+			gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+			program.resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+
+			var scale = 3.5;
+			gl.uniform2f(program.resolutionLocation, scale * canvas.width, scale * canvas.height);
+			var time = 0;
+			setInterval(function() {
+				time ++;
+				render(time); 
+			}, 20);
+		}
+
+		function render(time) {
+		 	gl.clear(gl.COLOR_BUFFER_BIT);
+			gl.enableVertexAttribArray(program.positionLocation);
+			gl.vertexAttribPointer(program.positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+			gl.bindTexture(gl.TEXTURE_2D, textures[0]);
+			drawRect(gl, rectangles[0]);
+
+			var trans = _matrixUtil.Transition(600, 800);
+			var rot = _matrixUtil.Rotation(1.0 * time/100);
+			var f = _matrixUtil.Mult3x3(rot, trans);
+
+			gl.bindTexture(gl.TEXTURE_2D, textures[1]);
+			drawRect(gl, rectangles[1], 0.6, f);
+
+			trans = _matrixUtil.Transition(2200, 1000);
+			rot = _matrixUtil.Rotation(1.0 * time/50 + 1);
+			f = _matrixUtil.Mult3x3(rot, trans);
+
+			gl.bindTexture(gl.TEXTURE_2D, textures[2]);
+			drawRect(gl, rectangles[2], 1, f);
+		}
+
+		function createTexture(image) {
+			var texture = gl.createTexture();
+			gl.bindTexture(gl.TEXTURE_2D, texture);
+
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+			delete image;
+			return texture;
+		}
+
+		function createRectangle(width, height) {
+			var vertices = [0, height,
+			 				0, 0,
+			 				width, height,
+			 				width, 0];
+
+			return new Float32Array(vertices);			
+		}
+
+		function drawRect(gl, rect, alpha, transformMatrix) {
+			if(!alpha) {
+				alpha = 1;
+			}
+			gl.uniform1f(program.alphaLocation, alpha);
+
+			gl.bufferData(gl.ARRAY_BUFFER, rect, gl.STATIC_DRAW);
+
+			if(!transformMatrix) {
+				transformMatrix = _matrixUtil.Identity();
+			}
+			gl.uniformMatrix3fv(program.matrixLocation, false, transformMatrix);
+
+			gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+		}
+
+		function initShaders(gl) {
+			vertexShader = createShaderFromScriptElement(gl, "vx-shader");
+			fragmentShader = createShaderFromScriptElement(gl, "fr-shader");
+			program = createProgram(gl, [vertexShader, fragmentShader]);
+			gl.useProgram(program);
+		}
+
+
+	}
+
+	function MatrixUtil() {
+		this.Rotation = function (angle) {
+			var cos = Math.cos(angle);
+			var sin = Math.sin(angle);
+
+			return [ cos, sin, 0.0,
+					-sin, cos, 0.0,
+					 0.0, 0.0, 1.0];
+		}
+
+		this.Transition = function(x, y)  {
+			return [1.0, 0.0, 0.0,
+					0.0, 1.0, 0.0,
+					  x,   y, 1.0];
+		}
+
+		this.Identity = function () {
+			return [1.0, 0.0, 0.0,
+					0.0, 1.0, 0.0,
+					0.0, 0.0, 1.0];
+		}
+
+		this.Mult2x2 = function(left, right) { 
+			return multip(left, right, 2); 
+		}
+
+		this.Mult3x3 = function(left, right) { 
+			return multip(left, right, 3); 
+		}
+
+		function multip(left, right, rank) {
+			var result = new Array();
+			for(var i = 0; i < left.length; i++) {
+				var value = 0;
+				var row = Math.floor(i / rank);
+				var col = i % rank;
+				for(var j = 0; j < rank; j++) {
+					var a = row * rank + j;
+					var b = col + j * rank;
+					console.log(a + ', ' + b);
+					value += left[a]  * right[b];
+				}
+				result.push(value);
+			} 
+			return result;
+		}
+	}
+</script>
+</head>
+<body>
+<canvas id="canvas" width="1024" height="768"></canvas>
+<script type="text/javascript">
+	var w = new Wrapper();
+	w.init();
+</script>
+</body>
+</html>
